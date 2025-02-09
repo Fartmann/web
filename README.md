@@ -1,1 +1,1 @@
-# web 3rd assignment by Adam Satyshev
+# web lab2 assignment by Adam Satyshev
