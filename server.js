@@ -1,88 +1,96 @@
-const express = require('express');
-const mongoose = require('mongoose');
-const bodyParser = require('body-parser');
-const path = require('path');
+require("dotenv").config();
+const express = require("express");
+const mongoose = require("mongoose");
+const jwt = require("jsonwebtoken");
+const bcrypt = require("bcryptjs");
+const cors = require("cors");
+const path = require("path");
 
 const app = express();
 const PORT = 3000;
+const SECRET_KEY = "your_secret_key";
 
-app.use(express.static(path.join(__dirname, 'assign3')));
+app.use(express.json());
+app.use(cors());
 
-app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, 'lab2')));
 
 mongoose.connect('mongodb+srv://adamsatyshev10:skLZeav4NKdyvovk@cluster0.yumpv.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0', { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('MongoDB connected'))
   .catch(err => console.log(err));
 
-//schema
-const blogPostSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  body: { type: String, required: true },
-  author: { type: String, default: 'Anonymous' },
-}, { timestamps: true });
+app.use(express.static(path.join(__dirname, 'assign4')));
 
-const BlogPost = mongoose.model('BlogPost', blogPostSchema);
+//schemas
+const UserSchema = new mongoose.Schema({
+  username: String,
+  password: String
+});
+const User = mongoose.model("User", UserSchema);
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'assign3', 'index.html'));
+const TaskSchema = new mongoose.Schema({
+  userId: String,
+  title: String,
+  description: String
+});
+const Task = mongoose.model("Task", TaskSchema);
+
+//authentication middleware
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (!token) return res.status(401).json({ error: "Token required" });
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+      if (err) return res.status(403).json({ error: "Invalid token" });
+      req.user = user;
+      next();
+  });
+}
+
+//registration
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  if (await User.findOne({ username })) return res.status(400).json({ error: "User already exists" });
+
+  await new User({ username, password: hashedPassword }).save();
+  res.json({ message: "User registered successfully" });
 });
 
-app.post('/blogs', async (req, res) => {
-  const { title, body, author } = req.body;
-  try {
-    const newPost = new BlogPost({ title, body, author });
-    await newPost.save();
-    res.status(201).json(newPost);
-  } catch (error) {
-    res.status(400).json({ message: 'Error creating blog post' });
+//login
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+  const user = await User.findOne({ username });
+
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({ error: "Invalid credentials" });
   }
+
+  const token = jwt.sign({ userId: user._id }, SECRET_KEY, { expiresIn: "1h" });
+  res.json({ token });
 });
 
-app.get('/blogs', async (req, res) => {
-  try {
-    const posts = await BlogPost.find();
-    res.status(200).json(posts);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching posts' });
-  }
+//routes
+app.get("/tasks", authenticateToken, async (req, res) => {
+  res.json(await Task.find({ userId: req.user.userId }));
 });
 
-app.get('/blogs/:id', async (req, res) => {
-  try {
-    const post = await BlogPost.findById(req.params.id);
-    if (!post) {
-      return res.status(404).json({ message: 'Post not found' });
-    }
-    res.status(200).json(post);
-  } catch (error) {
-    res.status(500).json({ message: 'Error fetching post' });
-  }
+app.post("/tasks", authenticateToken, async (req, res) => {
+  await new Task({ userId: req.user.userId, title: req.body.title, description: req.body.description }).save();
+  res.json({ message: "Task added" });
 });
 
-app.put('/blogs/:id', async (req, res) => {
-  try {
-    const updatedPost = await BlogPost.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updatedPost) {
-      return res.status(404).json({ message: 'Post not found' });
-    }
-    res.status(200).json(updatedPost);
-  } catch (error) {
-    res.status(400).json({ message: 'Error updating post' });
-  }
+app.put("/tasks/:id", authenticateToken, async (req, res) => {
+  await Task.findByIdAndUpdate(req.params.id, req.body);
+  res.json({ message: "Task updated" });
 });
 
-app.delete('/blogs/:id', async (req, res) => {
-  try {
-    const deletedPost = await BlogPost.findByIdAndDelete(req.params.id);
-    if (!deletedPost) {
-      return res.status(404).json({ message: 'Post not found' });
-    }
-    res.status(200).json({ message: 'Post deleted' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error deleting post' });
-  }
+app.delete("/tasks/:id", authenticateToken, async (req, res) => {
+  await Task.findByIdAndDelete(req.params.id);
+  res.json({ message: "Task deleted" });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
